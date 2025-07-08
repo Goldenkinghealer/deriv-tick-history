@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Deriv Tick History</title>
+  <style>
+    body { font-family: sans-serif; background: #f4f4f4; text-align: center; padding: 20px; }
+    table { margin: 20px auto; border-collapse: collapse; width: 90%; max-width: 800px; background: white; }
+    th, td { border: 1px solid #ccc; padding: 10px; font-size: 14px; }
+    th { background: #0077cc; color: white; }
+    tr:nth-child(even) { background: #f9f9f9; }
+    button { margin-top: 20px; padding: 10px 20px; font-size: 14px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>📊 Deriv Tick History (Volatility 100)</h1>
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Live Price</th>
+        <th>Mimicked Price</th>
+      </tr>
+    </thead>
+    <tbody id="tickTable"></tbody>
+  </table>
+
+  <button onclick="downloadCSV()">⬇️ Download Tick History</button>
+
+  <script>
+    const app_id = "84903";
+    const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${app_id}`);
+    const tickHistory = [];
+
+    function generateMimickedPrice(original) {
+      const str = original.toFixed(5); // use full precision
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = (hash << 5) - hash + str.charCodeAt(i);
+        hash |= 0; // Convert to 32bit integer
+      }
+
+      const offset = ((Math.abs(hash) % 9) + 1) / 100; // 0.01 to 0.09
+      const direction = hash % 2 === 0 ? 1 : -1;
+      const mimic = parseFloat((original + direction * offset).toFixed(2));
+      return mimic === original ? mimic + 0.01 : mimic;
+    }
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({
+        ticks: "R_100",
+        subscribe: 1
+      }));
+    };
+
+    ws.onmessage = (msg) => {
+      const data = JSON.parse(msg.data);
+      if (data.tick) {
+        const { epoch, quote } = data.tick;
+        const date = new Date(epoch * 1000);
+        const formattedTime = date.toLocaleString("en-GB", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit"
+        });
+
+        const livePrice = parseFloat(quote).toFixed(2);
+        const mimicPrice = generateMimickedPrice(parseFloat(quote)).toFixed(2);
+
+        tickHistory.push({
+          time: formattedTime,
+          live: livePrice,
+          mimic: mimicPrice
+        });
+
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${formattedTime}</td>
+          <td>${livePrice}</td>
+          <td>${mimicPrice}</td>
+        `;
+
+        const table = document.getElementById("tickTable");
+        table.insertBefore(row, table.firstChild);
+        if (table.rows.length > 50) table.deleteRow(50);
+      }
+    };
+
+    function downloadCSV() {
+      if (tickHistory.length === 0) {
+        alert("No data to download yet.");
+        return;
+      }
+
+      const header = "Time,Live Price,Mimicked Price\n";
+      const rows = tickHistory.map(t => `${t.time},${t.live},${t.mimic}`).join("\n");
+      const csvContent = header + rows;
+
+      const blob = new Blob([csvContent], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "tick-history.csv";
+      a.click();
+
+      URL.revokeObjectURL(url);
+    }
+  </script>
+</body>
+</html>
