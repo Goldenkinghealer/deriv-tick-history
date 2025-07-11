@@ -4,11 +4,13 @@
   <title>Deriv Tick History</title>
   <style>
     body { font-family: sans-serif; background: #f4f4f4; text-align: center; padding: 20px; }
-    table { margin: 20px auto; border-collapse: collapse; width: 90%; max-width: 800px; background: white; }
-    th, td { border: 1px solid #ccc; padding: 10px; font-size: 14px; }
+    table { margin: 20px auto; border-collapse: collapse; width: 95%; max-width: 900px; background: white; }
+    th, td { border: 1px solid #ccc; padding: 8px; font-size: 14px; }
     th { background: #0077cc; color: white; }
     tr:nth-child(even) { background: #f9f9f9; }
-    button { margin-top: 20px; padding: 10px 20px; font-size: 14px; cursor: pointer; }
+    button { margin-top: 20px; padding: 8px 16px; font-size: 14px; cursor: pointer; }
+    .live-blue { background-color: #d0e4ff; }
+    .live-red { background-color: #ffdddd; }
   </style>
 </head>
 <body>
@@ -19,6 +21,7 @@
         <th>Time</th>
         <th>Live Price</th>
         <th>Mimicked Price</th>
+        <th>Shield Digit</th>
       </tr>
     </thead>
     <tbody id="tickTable"></tbody>
@@ -32,80 +35,92 @@
     const tickHistory = [];
 
     function generateMimickedPrice(original) {
-      const str = original.toFixed(5); // use full precision
+      const str = original.toFixed(5);
       let hash = 0;
       for (let i = 0; i < str.length; i++) {
         hash = (hash << 5) - hash + str.charCodeAt(i);
-        hash |= 0; // Convert to 32bit integer
+        hash |= 0;
       }
-
-      const offset = ((Math.abs(hash) % 9) + 1) / 100; // 0.01 to 0.09
+      const offset = ((Math.abs(hash) % 9) + 1) / 100;
       const direction = hash % 2 === 0 ? 1 : -1;
       const mimic = parseFloat((original + direction * offset).toFixed(2));
       return mimic === original ? mimic + 0.01 : mimic;
     }
 
+    function generateShieldDigit(price) {
+      const digits = price.toFixed(2).replace('.', '').split('');
+      const all = ['0','1','2','3','4','5','6','7','8','9'];
+      const unused = all.filter(d => !digits.includes(d));
+      if (unused.length === 0) return 'X';
+      const str = price.toFixed(5);
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = (hash << 5) - hash + str.charCodeAt(i);
+        hash |= 0;
+      }
+      return unused[Math.abs(hash) % unused.length];
+    }
+
+    function findPreviousShieldDigit(epoch, sec) {
+      const targetEpoch = epoch - 60;
+      return tickHistory.find(t => Math.abs(t.epoch - targetEpoch) <= 2 && t.second === sec)?.shield || null;
+    }
+
+    function wasPreviousSecondSeen(epoch, sec) {
+      const prevMinute = new Date((epoch - 60) * 1000).getMinutes();
+      return tickHistory.some(t => {
+        const tDate = new Date(t.epoch * 1000);
+        return tDate.getMinutes() === prevMinute && t.second === sec - 1;
+      });
+    }
+
     ws.onopen = () => {
-      ws.send(JSON.stringify({
-        ticks: "R_100",
-        subscribe: 1
-      }));
+      ws.send(JSON.stringify({ ticks: "R_100", subscribe: 1 }));
     };
 
     ws.onmessage = (msg) => {
       const data = JSON.parse(msg.data);
-      if (data.tick) {
-        const { epoch, quote } = data.tick;
-        const date = new Date(epoch * 1000);
-        const formattedTime = date.toLocaleString("en-GB", {
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit"
-        });
+      if (!data.tick) return;
 
-        const livePrice = parseFloat(quote).toFixed(2);
-        const mimicPrice = generateMimickedPrice(parseFloat(quote)).toFixed(2);
+      const { epoch, quote } = data.tick;
+      const date = new Date(epoch * 1000);
+      const sec = date.getSeconds();
+      const min = date.getMinutes();
+      const timeStr = date.toLocaleTimeString("en-GB");
 
-        tickHistory.push({
-          time: formattedTime,
-          live: livePrice,
-          mimic: mimicPrice
-        });
+      const live = parseFloat(quote).toFixed(2);
+      const mimic = generateMimickedPrice(parseFloat(quote)).toFixed(2);
+      const shield = generateShieldDigit(parseFloat(quote));
 
-        const row = document.createElement("tr");
-        row.innerHTML = `
-          <td>${formattedTime}</td>
-          <td>${livePrice}</td>
-          <td>${mimicPrice}</td>
-        `;
+      const lastDigit = live.slice(-1);
+      const prevShield = findPreviousShieldDigit(epoch, sec);
+      const applyRed = prevShield && lastDigit === prevShield;
+      const applyBlue = wasPreviousSecondSeen(epoch, sec);
 
-        const table = document.getElementById("tickTable");
-        table.insertBefore(row, table.firstChild);
-        if (table.rows.length > 50) table.deleteRow(50);
-      }
+      tickHistory.push({ epoch, second: sec, time: timeStr, live, mimic, shield });
+
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${timeStr}</td>
+        <td class="${applyRed ? 'live-red' : applyBlue ? 'live-blue' : ''}">${live}</td>
+        <td>${mimic}</td>
+        <td>${shield}</td>
+      `;
+
+      const table = document.getElementById("tickTable");
+      table.insertBefore(row, table.firstChild);
+      if (table.rows.length > 60) table.deleteRow(60);
     };
 
     function downloadCSV() {
-      if (tickHistory.length === 0) {
-        alert("No data to download yet.");
-        return;
-      }
-
-      const header = "Time,Live Price,Mimicked Price\n";
-      const rows = tickHistory.map(t => `${t.time},${t.live},${t.mimic}`).join("\n");
-      const csvContent = header + rows;
-
-      const blob = new Blob([csvContent], { type: "text/csv" });
+      const header = "Time,Live Price,Mimicked Price,Shield Digit\n";
+      const rows = tickHistory.map(t => `${t.time},${t.live},${t.mimic},${t.shield}`).join("\n");
+      const blob = new Blob([header + rows], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
-
       const a = document.createElement("a");
       a.href = url;
       a.download = "tick-history.csv";
       a.click();
-
       URL.revokeObjectURL(url);
     }
   </script>
