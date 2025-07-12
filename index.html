@@ -3,18 +3,42 @@
 <head>
   <title>Deriv Tick History</title>
   <style>
-    body { font-family: sans-serif; background: #f4f4f4; text-align: center; padding: 20px; }
-    table { margin: 20px auto; border-collapse: collapse; width: 95%; max-width: 900px; background: white; }
-    th, td { border: 1px solid #ccc; padding: 8px; font-size: 14px; }
-    th { background: #0077cc; color: white; }
-    tr:nth-child(even) { background: #f9f9f9; }
-    button { margin-top: 20px; padding: 8px 16px; font-size: 14px; cursor: pointer; }
-    .live-blue { background-color: #d0e4ff; }
-    .live-red { background-color: #ffdddd; }
+    body {
+      font-family: sans-serif;
+      background: #f4f4f4;
+      text-align: center;
+      padding: 20px;
+    }
+    table {
+      margin: 20px auto;
+      border-collapse: collapse;
+      width: 95%;
+      max-width: 1000px;
+      background: white;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      font-size: 14px;
+    }
+    th {
+      background: #0077cc;
+      color: white;
+    }
+    tr:nth-child(even) {
+      background: #f9f9f9;
+    }
+    button {
+      margin-top: 20px;
+      padding: 8px 16px;
+      font-size: 14px;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
   <h1>📊 Deriv Tick History (Volatility 100)</h1>
+
   <table>
     <thead>
       <tr>
@@ -22,6 +46,7 @@
         <th>Live Price</th>
         <th>Mimicked Price</th>
         <th>Shield Digit</th>
+        <th>Previous Minute Digit</th>
       </tr>
     </thead>
     <tbody id="tickTable"></tbody>
@@ -34,8 +59,8 @@
     const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${app_id}`);
     const tickHistory = [];
 
-    function generateMimickedPrice(original) {
-      const str = original.toFixed(5);
+    function generateMimickedPrice(price) {
+      const str = price.toFixed(5);
       let hash = 0;
       for (let i = 0; i < str.length; i++) {
         hash = (hash << 5) - hash + str.charCodeAt(i);
@@ -43,14 +68,13 @@
       }
       const offset = ((Math.abs(hash) % 9) + 1) / 100;
       const direction = hash % 2 === 0 ? 1 : -1;
-      const mimic = parseFloat((original + direction * offset).toFixed(2));
-      return mimic === original ? mimic + 0.01 : mimic;
+      const mimic = parseFloat((price + direction * offset).toFixed(2));
+      return mimic === price ? mimic + 0.01 : mimic;
     }
 
     function generateShieldDigit(price) {
       const digits = price.toFixed(2).replace('.', '').split('');
-      const all = ['0','1','2','3','4','5','6','7','8','9'];
-      const unused = all.filter(d => !digits.includes(d));
+      const unused = ['0','1','2','3','4','5','6','7','8','9'].filter(d => !digits.includes(d));
       if (unused.length === 0) return 'X';
       const str = price.toFixed(5);
       let hash = 0;
@@ -61,60 +85,58 @@
       return unused[Math.abs(hash) % unused.length];
     }
 
-    function findPreviousShieldDigit(epoch, sec) {
+    function getPreviousMinuteLastDigit(epoch, sec) {
       const targetEpoch = epoch - 60;
-      return tickHistory.find(t => Math.abs(t.epoch - targetEpoch) <= 2 && t.second === sec)?.shield || null;
-    }
-
-    function wasPreviousSecondSeen(epoch, sec) {
-      const prevMinute = new Date((epoch - 60) * 1000).getMinutes();
-      return tickHistory.some(t => {
-        const tDate = new Date(t.epoch * 1000);
-        return tDate.getMinutes() === prevMinute && t.second === sec - 1;
-      });
+      const match = tickHistory.find(t => Math.abs(t.epoch - targetEpoch) <= 2 && t.second === sec);
+      return match ? match.live.slice(-1) : '—';
     }
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ ticks: "R_100", subscribe: 1 }));
     };
 
-    ws.onmessage = (msg) => {
+    ws.onmessage = msg => {
       const data = JSON.parse(msg.data);
       if (!data.tick) return;
 
       const { epoch, quote } = data.tick;
       const date = new Date(epoch * 1000);
       const sec = date.getSeconds();
-      const min = date.getMinutes();
       const timeStr = date.toLocaleTimeString("en-GB");
-
       const live = parseFloat(quote).toFixed(2);
       const mimic = generateMimickedPrice(parseFloat(quote)).toFixed(2);
       const shield = generateShieldDigit(parseFloat(quote));
-
-      const lastDigit = live.slice(-1);
-      const prevShield = findPreviousShieldDigit(epoch, sec);
-      const applyRed = prevShield && lastDigit === prevShield;
-      const applyBlue = wasPreviousSecondSeen(epoch, sec);
+      const prevDigit = (sec === 0 || sec === 58) ? getPreviousMinuteLastDigit(epoch, sec) : '—';
 
       tickHistory.push({ epoch, second: sec, time: timeStr, live, mimic, shield });
 
       const row = document.createElement("tr");
+      if (sec === 0) {
+        row.style.backgroundColor = "#d0e4ff"; // Light Blue
+      } else if (sec === 58) {
+        row.style.backgroundColor = "#fff8cc"; // Light Yellow
+      }
+
       row.innerHTML = `
         <td>${timeStr}</td>
-        <td class="${applyRed ? 'live-red' : applyBlue ? 'live-blue' : ''}">${live}</td>
+        <td>${live}</td>
         <td>${mimic}</td>
         <td>${shield}</td>
+        <td>${prevDigit}</td>
       `;
 
       const table = document.getElementById("tickTable");
       table.insertBefore(row, table.firstChild);
-      if (table.rows.length > 60) table.deleteRow(60);
+      if (table.rows.length > 100) table.deleteRow(100);
     };
 
     function downloadCSV() {
-      const header = "Time,Live Price,Mimicked Price,Shield Digit\n";
-      const rows = tickHistory.map(t => `${t.time},${t.live},${t.mimic},${t.shield}`).join("\n");
+      const header = "Time,Live Price,Mimicked Price,Shield Digit,Previous Minute Digit\n";
+      const rows = tickHistory.map(t => {
+        const prevDigit = (t.second === 0 || t.second === 58) ? getPreviousMinuteLastDigit(t.epoch, t.second) : '—';
+        return `${t.time},${t.live},${t.mimic},${t.shield},${prevDigit}`;
+      }).join("\n");
+
       const blob = new Blob([header + rows], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
