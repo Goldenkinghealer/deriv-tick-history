@@ -1,95 +1,36 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Deriv Tick History</title>
+  <title>Deriv Tick Trigonometry 30/58</title>
   <style>
-    body {
-      font-family: sans-serif;
-      background: #f4f4f4;
-      text-align: center;
-      padding: 20px;
-    }
-    table {
-      margin: 20px auto;
-      border-collapse: collapse;
-      width: 95%;
-      max-width: 1000px;
-      background: white;
-    }
-    th, td {
-      border: 1px solid #ccc;
-      padding: 8px;
-      font-size: 14px;
-    }
-    th {
-      background: #0077cc;
-      color: white;
-    }
-    tr:nth-child(even) {
-      background: #f9f9f9;
-    }
-    button {
-      margin-top: 20px;
-      padding: 8px 16px;
-      font-size: 14px;
-      cursor: pointer;
-    }
+    body { font-family: sans-serif; background: #f4f4f4; text-align: center; padding: 20px; }
+    table { margin: 20px auto; border-collapse: collapse; width: 95%; max-width: 1000px; background: white; }
+    th, td { border: 1px solid #ccc; padding: 8px; font-size: 14px; }
+    th { background: #0077cc; color: white; }
+    tr:nth-child(even) { background: #f9f9f9; }
+    .math-blue { background-color: #ddeaff; }
+    button { margin-top: 20px; padding: 8px 16px; font-size: 14px; cursor: pointer; }
   </style>
 </head>
 <body>
-  <h1>📊 Deriv Tick History (Volatility 100)</h1>
-
+  <h1>📐 Deriv Tick Trig Combo Tracker</h1>
   <table>
     <thead>
       <tr>
         <th>Time</th>
         <th>Live Price</th>
-        <th>Mimicked Price</th>
-        <th>Shield Digit</th>
-        <th>Previous Minute Digit</th>
+        <th>Mathematics</th>
       </tr>
     </thead>
     <tbody id="tickTable"></tbody>
   </table>
-
-  <button onclick="downloadCSV()">⬇️ Download Tick History</button>
+  <button onclick="downloadCSV()">⬇️ Download Tick Math</button>
 
   <script>
     const app_id = "84903";
     const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${app_id}`);
     const tickHistory = [];
-
-    function generateMimickedPrice(price) {
-      const str = price.toFixed(5);
-      let hash = 0;
-      for (let i = 0; i < str.length; i++) {
-        hash = (hash << 5) - hash + str.charCodeAt(i);
-        hash |= 0;
-      }
-      const offset = ((Math.abs(hash) % 9) + 1) / 100;
-      const direction = hash % 2 === 0 ? 1 : -1;
-      const mimic = parseFloat((price + direction * offset).toFixed(2));
-      return mimic === price ? mimic + 0.01 : mimic;
-    }
-
-    function generateShieldDigit(price) {
-      const digits = price.toFixed(2).replace('.', '').split('');
-      const unused = ['0','1','2','3','4','5','6','7','8','9'].filter(d => !digits.includes(d));
-      if (unused.length === 0) return 'X';
-      const str = price.toFixed(5);
-      let hash = 0;
-      for (let i = 0; i < str.length; i++) {
-        hash = (hash << 5) - hash + str.charCodeAt(i);
-        hash |= 0;
-      }
-      return unused[Math.abs(hash) % unused.length];
-    }
-
-    function getPreviousMinuteLastDigit(epoch, sec) {
-      const targetEpoch = epoch - 60;
-      const match = tickHistory.find(t => Math.abs(t.epoch - targetEpoch) <= 2 && t.second === sec);
-      return match ? match.live.slice(-1) : '—';
-    }
+    let latestCosDelta = null; // stores cos(delta) from sec 58
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ ticks: "R_100", subscribe: 1 }));
@@ -98,50 +39,75 @@
     ws.onmessage = msg => {
       const data = JSON.parse(msg.data);
       if (!data.tick) return;
-
       const { epoch, quote } = data.tick;
-      const date = new Date(epoch * 1000);
-      const sec = date.getSeconds();
-      const timeStr = date.toLocaleTimeString("en-GB");
+
+      const now = new Date(epoch * 1000);
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hour = String(now.getHours()).padStart(2, '0');
+      const minute = now.getMinutes();
+      const second = now.getSeconds();
+      const timeStr = `${year}-${month}-${day} ${hour}:${String(minute).padStart(2,'0')}:${String(second).padStart(2,'0')}`;
       const live = parseFloat(quote).toFixed(2);
-      const mimic = generateMimickedPrice(parseFloat(quote)).toFixed(2);
-      const shield = generateShieldDigit(parseFloat(quote));
-      const prevDigit = (sec === 0 || sec === 58) ? getPreviousMinuteLastDigit(epoch, sec) : '—';
 
-      tickHistory.push({ epoch, second: sec, time: timeStr, live, mimic, shield });
+      const prevMinute = (minute + 59) % 60;
+      const matchingTick = tickHistory.find(t => {
+        const tDate = new Date(t.epoch * 1000);
+        return tDate.getMinutes() === prevMinute && tDate.getSeconds() === second;
+      });
 
-      const row = document.createElement("tr");
-      if (sec === 0) {
-        row.style.backgroundColor = "#d0e4ff"; // Light Blue
-      } else if (sec === 58) {
-        row.style.backgroundColor = "#fff8cc"; // Light Yellow
+      let mathFormula = "";
+      let highlightClass = "";
+
+      if (matchingTick && (second === 58 || second === 30)) {
+        const prevPrice = parseFloat(matchingTick.live);
+        const delta = (live - prevPrice);
+        const absDelta = Math.abs(delta);
+
+        if (second === 58) {
+          const cosVal = Math.cos(delta).toFixed(3);
+          latestCosDelta = parseFloat(cosVal);
+          mathFormula = `cos(${absDelta.toFixed(2)}) = ${cosVal}`;
+          highlightClass = "math-blue";
+        } else if (second === 30) {
+          const sinVal = Math.sin(delta).toFixed(3);
+          if (latestCosDelta !== null) {
+            const sum = (parseFloat(sinVal) + latestCosDelta).toFixed(3);
+            mathFormula = `sin(${absDelta.toFixed(2)}) + cos(Δ58) = ${sum}`;
+          } else {
+            mathFormula = `sin(${absDelta.toFixed(2)}) + cos(Δ58) = —`;
+          }
+          highlightClass = "math-blue";
+        }
       }
 
+      tickHistory.push({ epoch, live });
+      if (tickHistory.length > 1000) tickHistory.shift();
+
+      const row = document.createElement("tr");
+      row.className = highlightClass;
       row.innerHTML = `
         <td>${timeStr}</td>
         <td>${live}</td>
-        <td>${mimic}</td>
-        <td>${shield}</td>
-        <td>${prevDigit}</td>
+        <td>${mathFormula}</td>
       `;
-
-      const table = document.getElementById("tickTable");
-      table.insertBefore(row, table.firstChild);
-      if (table.rows.length > 100) table.deleteRow(100);
+      document.getElementById("tickTable").insertBefore(row, document.getElementById("tickTable").firstChild);
+      if (document.getElementById("tickTable").rows.length > 100) {
+        document.getElementById("tickTable").deleteRow(100);
+      }
     };
 
     function downloadCSV() {
-      const header = "Time,Live Price,Mimicked Price,Shield Digit,Previous Minute Digit\n";
-      const rows = tickHistory.map(t => {
-        const prevDigit = (t.second === 0 || t.second === 58) ? getPreviousMinuteLastDigit(t.epoch, t.second) : '—';
-        return `${t.time},${t.live},${t.mimic},${t.shield},${prevDigit}`;
-      }).join("\n");
-
+      const header = "Time,Live Price,Mathematics\n";
+      const rows = Array.from(document.querySelectorAll("#tickTable tr"))
+        .map(row => Array.from(row.cells).map(cell => cell.textContent).join(","))
+        .join("\n");
       const blob = new Blob([header + rows], { type: "text/csv" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "tick-history.csv";
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = "tick-trig-combo.csv";
       a.click();
       URL.revokeObjectURL(url);
     }
