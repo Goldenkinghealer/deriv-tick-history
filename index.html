@@ -1,36 +1,44 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Deriv Tick Trigonometry 30/58</title>
+  <title>Deriv Tick - Static Blue at 00</title>
   <style>
     body { font-family: sans-serif; background: #f4f4f4; text-align: center; padding: 20px; }
     table { margin: 20px auto; border-collapse: collapse; width: 95%; max-width: 1000px; background: white; }
     th, td { border: 1px solid #ccc; padding: 8px; font-size: 14px; }
     th { background: #0077cc; color: white; }
     tr:nth-child(even) { background: #f9f9f9; }
-    .math-blue { background-color: #ddeaff; }
+    .math-blue { background-color: #ddeaff !important; }
     button { margin-top: 20px; padding: 8px 16px; font-size: 14px; cursor: pointer; }
   </style>
 </head>
 <body>
-  <h1>📐 Deriv Tick Trig Combo Tracker</h1>
+  <h1>📊 Deriv Tick with Static Blue @00</h1>
   <table>
     <thead>
       <tr>
         <th>Time</th>
+        <th>Excel DateTime</th>
         <th>Live Price</th>
         <th>Mathematics</th>
       </tr>
     </thead>
     <tbody id="tickTable"></tbody>
   </table>
-  <button onclick="downloadCSV()">⬇️ Download Tick Math</button>
+  <button onclick="downloadCSV()">⬇️ Download Tick Data</button>
 
   <script>
     const app_id = "84903";
     const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${app_id}`);
     const tickHistory = [];
-    let latestCosDelta = null; // stores cos(delta) from sec 58
+    let trigFrom58 = { sin: null, cos: null, delta: null };
+
+    function getExcelSerial(date) {
+      const msPerDay = 86400000;
+      const excelEpoch = new Date('1899-12-30T00:00:00Z');
+      const serial = (date - excelEpoch) / msPerDay;
+      return serial.toFixed(8);
+    }
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ ticks: "R_100", subscribe: 1 }));
@@ -39,47 +47,43 @@
     ws.onmessage = msg => {
       const data = JSON.parse(msg.data);
       if (!data.tick) return;
-      const { epoch, quote } = data.tick;
 
+      const { epoch, quote } = data.tick;
       const now = new Date(epoch * 1000);
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-      const day = String(now.getDate()).padStart(2, '0');
-      const hour = String(now.getHours()).padStart(2, '0');
-      const minute = now.getMinutes();
-      const second = now.getSeconds();
-      const timeStr = `${year}-${month}-${day} ${hour}:${String(minute).padStart(2,'0')}:${String(second).padStart(2,'0')}`;
+      const hours = now.getHours();
+      const minutes = now.getMinutes();
+      const seconds = now.getSeconds();
+      const timeStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`;
+      const excelSerial = getExcelSerial(now);
       const live = parseFloat(quote).toFixed(2);
 
-      const prevMinute = (minute + 59) % 60;
+      const prevMinute = (minutes + 59) % 60;
       const matchingTick = tickHistory.find(t => {
         const tDate = new Date(t.epoch * 1000);
-        return tDate.getMinutes() === prevMinute && tDate.getSeconds() === second;
+        return tDate.getMinutes() === prevMinute && tDate.getSeconds() === seconds;
       });
 
       let mathFormula = "";
       let highlightClass = "";
 
-      if (matchingTick && (second === 58 || second === 30)) {
+      if (matchingTick && (seconds === 58 || seconds === 20)) {
         const prevPrice = parseFloat(matchingTick.live);
-        const delta = (live - prevPrice);
+        const delta = live - prevPrice;
         const absDelta = Math.abs(delta);
 
-        if (second === 58) {
-          const cosVal = Math.cos(delta).toFixed(3);
-          latestCosDelta = parseFloat(cosVal);
-          mathFormula = `cos(${absDelta.toFixed(2)}) = ${cosVal}`;
-          highlightClass = "math-blue";
-        } else if (second === 30) {
+        if (seconds === 58) {
           const sinVal = Math.sin(delta).toFixed(3);
-          if (latestCosDelta !== null) {
-            const sum = (parseFloat(sinVal) + latestCosDelta).toFixed(3);
-            mathFormula = `sin(${absDelta.toFixed(2)}) + cos(Δ58) = ${sum}`;
-          } else {
-            mathFormula = `sin(${absDelta.toFixed(2)}) + cos(Δ58) = —`;
-          }
-          highlightClass = "math-blue";
+          const cosVal = Math.cos(delta).toFixed(3);
+          trigFrom58 = { sin: sinVal, cos: cosVal, delta: absDelta.toFixed(2) };
+          mathFormula = `cos(${absDelta.toFixed(2)}) = ${cosVal}`;
+        } else if (seconds === 20 && trigFrom58.sin && trigFrom58.cos && trigFrom58.delta) {
+          const sum = (parseFloat(trigFrom58.sin) + parseFloat(trigFrom58.cos)).toFixed(3);
+          mathFormula = `sin(${trigFrom58.delta}) + cos(${trigFrom58.delta}) = ${sum}`;
         }
+      }
+
+      if (seconds === 0) {
+        highlightClass = "math-blue";
       }
 
       tickHistory.push({ epoch, live });
@@ -89,25 +93,39 @@
       row.className = highlightClass;
       row.innerHTML = `
         <td>${timeStr}</td>
+        <td>${excelSerial}</td>
         <td>${live}</td>
         <td>${mathFormula}</td>
       `;
-      document.getElementById("tickTable").insertBefore(row, document.getElementById("tickTable").firstChild);
-      if (document.getElementById("tickTable").rows.length > 100) {
-        document.getElementById("tickTable").deleteRow(100);
+      const table = document.getElementById("tickTable");
+      table.insertBefore(row, table.firstChild);
+
+      // Keep up to 100 rows, but don't delete those with math-blue class
+      const maxRows = 100;
+      let rows = Array.from(table.rows);
+      let count = 0;
+
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const r = rows[i];
+        if (!r.classList.contains("math-blue")) {
+          count++;
+          if (count > maxRows) {
+            table.deleteRow(i);
+          }
+        }
       }
     };
 
     function downloadCSV() {
-      const header = "Time,Live Price,Mathematics\n";
+      const header = "Time,Excel DateTime,Live Price,Mathematics\n";
       const rows = Array.from(document.querySelectorAll("#tickTable tr"))
         .map(row => Array.from(row.cells).map(cell => cell.textContent).join(","))
         .join("\n");
       const blob = new Blob([header + rows], { type: "text/csv" });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      a.href     = url;
-      a.download = "tick-trig-combo.csv";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "tick-static-blue.csv";
       a.click();
       URL.revokeObjectURL(url);
     }
